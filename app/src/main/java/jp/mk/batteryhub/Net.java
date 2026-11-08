@@ -31,6 +31,17 @@ public final class Net {
         return o.toString();
     }
 
+    /** ホスト→クライアントの受領確認（v1.5〜。クライアントの再送判定に使う） */
+    public static String buildAckJson() {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("type", "ack");
+            o.put("ts", System.currentTimeMillis());
+        } catch (JSONException ignored) {
+        }
+        return o.toString();
+    }
+
     public static String buildDiscoveryJson() {
         JSONObject o = new JSONObject();
         try {

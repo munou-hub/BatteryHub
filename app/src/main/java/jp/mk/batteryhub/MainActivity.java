@@ -221,7 +221,7 @@ public class MainActivity extends Activity {
                 : "電池最適化: 未除外（止まる可能性あり）";
         tvStatus.setText("サービス: " + state + "（" + role + "）"
                 + "\n警告条件: 15%未満で通知、20%以上で再アーム"
-                + "\n送信: 変化時（15秒スロットル）＋60秒ハートビート"
+                + "\n送信: 変化時（15秒スロットル）＋30秒ハートビート＋ACK再送"
                 + "\n" + bleState + "（近距離のみ、Wi-Fiと並行）"
                 + "\n" + optState
                 + extra);

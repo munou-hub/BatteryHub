@@ -55,6 +55,7 @@ public class BleTransport {
     private BluetoothLeAdvertiser advertiser;
     private AdvertiseCallback advertiseCallback;
     private boolean advertising;
+    private volatile boolean advertiseRequested;
 
     private BluetoothLeScanner scanner;
     private ScanCallback scanCallback;
@@ -200,11 +201,13 @@ public class BleTransport {
             @Override
             public void onStartFailure(int errorCode) {
                 advertising = false;
+                advertiseRequested = false;
                 Log.w(TAG, "advertise failed: " + errorCode);
             }
         };
         try {
             advertiser.startAdvertising(settings, data, advertiseCallback);
+            advertiseRequested = true;
             return true;
         } catch (Exception e) {
             Log.w(TAG, "startAdvertising exception: " + e.getMessage());
@@ -221,10 +224,20 @@ public class BleTransport {
         }
         advertiseCallback = null;
         advertising = false;
+        advertiseRequested = false;
     }
 
     public boolean isAdvertising() {
         return advertising;
+    }
+
+    /** 報知開始を要求済みか（ウォッチドッグ判定用。開始コールバックは非同期のため分離） */
+    public boolean isAdvertiseRequested() {
+        return advertiseRequested;
+    }
+
+    public boolean isScanning() {
+        return scanning;
     }
 
     // ---------- ホスト: スキャン受信 ----------

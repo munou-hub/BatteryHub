@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit;
  * - ホストモード: UDPでレポートを受信し、デバイス一覧を常駐通知に出す。
  *   常駐通知はリングゲージ表示（RemoteViews＋生成ビットマップ、最大5台＋残りはテキスト）。
  *   15%未満のデバイスがあれば警告通知（20%以上に回復するまで再通知しない）。
- *   自端末の電池も一覧に含める。
+ *   ホスト自身の残量は一覧に含めない（v1.5〜）。
  */
 public class BatteryService extends Service {
 
@@ -50,7 +50,9 @@ public class BatteryService extends Service {
     static final int ALERT_REARM = 20;
 
     private static final long SEND_THROTTLE_MS = 15_000;
-    private static final long HEARTBEAT_SEC = 60;
+    private static final long HEARTBEAT_SEC = 30;
+    /** ACKがこの時間なければ自動で再発見を試みる */
+    private static final long REDISCOVERY_INTERVAL_MS = 120_000;
     /** この時間レポートが無いデバイスは「応答なし」表示 */
     static final long STALE_MS = 180_000;
 
@@ -74,6 +76,14 @@ public class BatteryService extends Service {
     private volatile boolean lastBleCharging = false;
     private volatile boolean bleActive = false;
 
+    // 同期の堅牢化（v1.5〜）
+    private volatile long lastAckMs = 0;
+    private volatile long lastDiscoveryMs = 0;
+    private volatile boolean deferredSendPending = false;
+    private android.net.wifi.WifiManager.WifiLock wifiLock;
+    private android.net.wifi.WifiManager.MulticastLock multicastLock;
+    private BroadcastReceiver btStateReceiver;
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -95,18 +105,99 @@ public class BatteryService extends Service {
             HostState.get().clear();
             startReportListener();
             startDiscoveryResponder();
-            // 自端末分を即時反映
-            readOwnBattery();
-            applyReport(prefs.getDeviceName(), ownLevel, ownCharging);
-            scheduler.scheduleAtFixedRate(this::refreshHostNotification,
+            // v1.5: ホスト自身の残量は一覧・通知に入れない（MK指示）。
+            // 自端末の電池監視自体もホストでは行わない。
+            scheduler.scheduleAtFixedRate(this::hostPeriodic,
                     HEARTBEAT_SEC, HEARTBEAT_SEC, TimeUnit.SECONDS);
         } else {
             scheduler.scheduleAtFixedRate(this::sendReportNow,
                     0, HEARTBEAT_SEC, TimeUnit.SECONDS);
+            scheduler.scheduleAtFixedRate(this::clientPeriodic,
+                    HEARTBEAT_SEC, HEARTBEAT_SEC, TimeUnit.SECONDS);
         }
+        acquireLocks();
+        registerBtStateReceiver();
         startBle();
         broadcastStateChanged();
         return START_STICKY;
+    }
+
+    /** ホストの定期処理: 通知更新＋BLEスキャンのウォッチドッグ。 */
+    private void hostPeriodic() {
+        refreshHostNotification();
+        if (prefs.isBleEnabled() && ble != null && !ble.isScanning()) {
+            bleActive = ble.startScanning();
+            Log.i(TAG, "BLE scan watchdog restart, active=" + bleActive);
+        }
+    }
+
+    /** クライアントの定期処理: BLEアドバタイズのウォッチドッグ。 */
+    private void clientPeriodic() {
+        if (prefs.isBleEnabled() && ble != null && !ble.isAdvertiseRequested()) {
+            updateBleAdvertising(true);
+            Log.i(TAG, "BLE advertise watchdog restart, active=" + bleActive);
+        }
+    }
+
+    // ---------- バックグラウンド維持のロック ----------
+
+    /**
+     * v1.5: Wi-Fiロックとマルチキャストロックを取得する。
+     * 画面OFFやWi-Fi省電力で受信が落ちるのを防ぐ。電池は食うので常駐中のみ保持する。
+     */
+    private void acquireLocks() {
+        try {
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                    getApplicationContext().getSystemService(WIFI_SERVICE);
+            if (wm == null) return;
+            if (wifiLock == null) {
+                int mode = Build.VERSION.SDK_INT >= 27
+                        ? android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                        : android.net.wifi.WifiManager.WIFI_MODE_FULL;
+                wifiLock = wm.createWifiLock(mode, "BatteryHub:fg");
+                wifiLock.setReferenceCounted(false);
+            }
+            if (!wifiLock.isHeld()) wifiLock.acquire();
+            if (multicastLock == null) {
+                multicastLock = wm.createMulticastLock("BatteryHub:mc");
+                multicastLock.setReferenceCounted(false);
+            }
+            if (!multicastLock.isHeld()) multicastLock.acquire();
+        } catch (Exception e) {
+            Log.w(TAG, "acquireLocks failed: " + e.getMessage());
+        }
+    }
+
+    private void releaseLocks() {
+        try {
+            if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
+        } catch (Exception ignored) {
+        }
+        try {
+            if (multicastLock != null && multicastLock.isHeld()) multicastLock.release();
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** BluetoothのON/OFFに追随する。ONに戻ったらBLEを自動で再開する。 */
+    private void registerBtStateReceiver() {
+        if (btStateReceiver != null) return;
+        btStateReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                int state = intent.getIntExtra(
+                        android.bluetooth.BluetoothAdapter.EXTRA_STATE,
+                        android.bluetooth.BluetoothAdapter.ERROR);
+                if (state == android.bluetooth.BluetoothAdapter.STATE_ON) {
+                    Log.i(TAG, "Bluetooth ON, restarting BLE");
+                    startBle();
+                } else if (state == android.bluetooth.BluetoothAdapter.STATE_OFF) {
+                    bleActive = false;
+                }
+            }
+        };
+        registerReceiver(btStateReceiver, new IntentFilter(
+                android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED));
     }
 
     @Override
@@ -179,6 +270,14 @@ public class BatteryService extends Service {
         }
         reportThread = null;
         discoveryThread = null;
+        releaseLocks();
+        if (btStateReceiver != null) {
+            try {
+                unregisterReceiver(btStateReceiver);
+            } catch (Exception ignored) {
+            }
+            btStateReceiver = null;
+        }
         if (ble != null) {
             ble.stopAll();
             ble = null;
@@ -215,7 +314,8 @@ public class BatteryService extends Service {
     private void updateBleAdvertising(boolean force) {
         if (ble == null || hostMode || !prefs.isBleEnabled()) return;
         if (ownLevel < 0) return;
-        if (!force && ownLevel == lastBleLevel && ownCharging == lastBleCharging) return;
+        if (!force && ownLevel == lastBleLevel && ownCharging == lastBleCharging
+                && ble.isAdvertiseRequested()) return;
         bleActive = ble.startAdvertising(prefs.getDeviceName(), ownLevel, ownCharging);
         if (bleActive) {
             lastBleLevel = ownLevel;
@@ -238,12 +338,14 @@ public class BatteryService extends Service {
                 ownLevel = Math.round(level * 100f / scale);
                 ownCharging = status == BatteryManager.BATTERY_STATUS_CHARGING
                         || status == BatteryManager.BATTERY_STATUS_FULL;
-                if (hostMode) {
-                    applyReport(prefs.getDeviceName(), ownLevel, ownCharging);
-                } else {
+                if (!hostMode) {
                     long now = System.currentTimeMillis();
-                    if (now - lastSendMs >= SEND_THROTTLE_MS) {
+                    long elapsed = now - lastSendMs;
+                    if (elapsed >= SEND_THROTTLE_MS) {
                         sendReportNow();
+                    } else {
+                        // v1.5: スロットル中でも変化を捨てず、期限が来たら送る
+                        scheduleDeferredSend(SEND_THROTTLE_MS - elapsed);
                     }
                 }
             }
@@ -288,24 +390,76 @@ public class BatteryService extends Service {
         readOwnBattery();
         if (ownLevel < 0) return;
         updateBleAdvertising(false);
-        final String hostIp = prefs.getHostIp();
+        lastSendMs = System.currentTimeMillis();
+        new Thread(this::sendWithAckAndRecovery, "bh-send").start();
+    }
+
+    /** スロットル期限後に1回だけ送る（変化イベントを捨てないため）。 */
+    private void scheduleDeferredSend(long delayMs) {
+        if (deferredSendPending || scheduler == null) return;
+        deferredSendPending = true;
+        try {
+            scheduler.schedule(() -> {
+                deferredSendPending = false;
+                sendReportNow();
+            }, Math.max(0, delayMs), TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            deferredSendPending = false;
+        }
+    }
+
+    /**
+     * v1.5: ACK付き送信。ホストからの受領確認を最大3回まで再送して待つ。
+     * 全滅したら（IPが変わった等を疑い）自動で再発見し、見つかれば送り直す。
+     * ワーカースレッドから呼ぶこと。
+     */
+    private void sendWithAckAndRecovery() {
+        if (trySendWithAck()) return;
+        long now = System.currentTimeMillis();
+        if (now - lastDiscoveryMs >= REDISCOVERY_INTERVAL_MS) {
+            lastDiscoveryMs = now;
+            Discovery.Result r = Discovery.discoverHost(this, 2500);
+            if (r != null && r.ip != null && !r.ip.isEmpty()) {
+                String current = prefs.getHostIp();
+                if (!r.ip.equals(current)) {
+                    Log.i(TAG, "host IP changed: " + current + " -> " + r.ip);
+                    prefs.save(null, null, r.ip, null);
+                }
+                trySendWithAck();
+            }
+        }
+        refreshOngoingNotification();
+    }
+
+    /** レポートを送り、ACKが返れば true。最大3回再送する。ワーカースレッド専用。 */
+    private boolean trySendWithAck() {
+        String hostIp = prefs.getHostIp();
         if (hostIp == null || hostIp.trim().isEmpty()) {
             refreshOngoingNotification();
-            return;
+            return false;
         }
-        final String json = Net.buildReportJson(prefs.getDeviceName(), ownLevel, ownCharging);
-        lastSendMs = System.currentTimeMillis();
-        new Thread(() -> {
+        String json = Net.buildReportJson(prefs.getDeviceName(), ownLevel, ownCharging);
+        for (int attempt = 0; attempt < 3; attempt++) {
             try (DatagramSocket socket = new DatagramSocket()) {
+                socket.setSoTimeout(700);
                 byte[] buf = json.getBytes("UTF-8");
                 DatagramPacket p = new DatagramPacket(buf, buf.length,
                         InetAddress.getByName(hostIp.trim()), Net.PORT_REPORT);
                 socket.send(p);
+                byte[] rbuf = new byte[512];
+                DatagramPacket rp = new DatagramPacket(rbuf, rbuf.length);
+                socket.receive(rp);
+                JSONObject o = Net.parseJson(rp.getData(), rp.getLength());
+                if (o != null && "ack".equals(o.optString("type"))) {
+                    lastAckMs = System.currentTimeMillis();
+                    refreshOngoingNotification();
+                    return true;
+                }
             } catch (Exception e) {
-                Log.w(TAG, "send failed: " + e.getMessage());
+                // タイムアウト等は再送する
             }
-            refreshOngoingNotification();
-        }, "bh-send").start();
+        }
+        return false;
     }
 
     // ---------- ホスト ----------
@@ -326,6 +480,13 @@ public class BatteryService extends Service {
                     boolean charging = o.optBoolean("charging", false);
                     if (level < 0) continue;
                     applyReport(name, level, charging);
+                    // v1.5: 受領確認（ACK）を返す。クライアントはACKが無ければ再送・再発見する
+                    try {
+                        byte[] ack = Net.buildAckJson().getBytes("UTF-8");
+                        reportSocket.send(new DatagramPacket(ack, ack.length,
+                                p.getAddress(), p.getPort()));
+                    } catch (Exception ignored) {
+                    }
                 }
             } catch (Exception e) {
                 if (running) Log.w(TAG, "report listener stopped: " + e.getMessage());
@@ -428,7 +589,14 @@ public class BatteryService extends Service {
             String dest = (ip == null || ip.isEmpty()) ? "ホストIP未設定" : ("送信先: " + ip);
             String own = ownLevel >= 0 ? (" / 自分: " + ownLevel + "%") : "";
             String bleText = prefs.isBleEnabled() ? (bleActive ? " / BLE送信中" : " / BLE不可") : "";
-            b.setContentText(dest + own + bleText);
+            String syncText;
+            if (lastAckMs > 0) {
+                long ago = Math.max(0, (System.currentTimeMillis() - lastAckMs) / 1000);
+                syncText = " / 最終同期: " + ago + "秒前";
+            } else {
+                syncText = (ip == null || ip.isEmpty()) ? "" : " / 未同期";
+            }
+            b.setContentText(dest + own + bleText + syncText);
         }
         return b.build();
     }
