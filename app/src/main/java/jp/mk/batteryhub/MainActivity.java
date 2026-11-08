@@ -118,6 +118,11 @@ public class MainActivity extends Activity {
             statusNote = "サービスを開始しました";
             refreshStatus();
             Toast.makeText(this, "BatteryHub サービス開始", Toast.LENGTH_SHORT).show();
+            // v1.4: 未除外ならその場で電池最適化の除外を要求する。
+            // 除外しないと Doze でフォアグラウンドサービスごと止められ得る。
+            if (!isBatteryOptimizationExempted()) {
+                requestBatteryOptimizationExemption();
+            }
         });
 
         btnStop.setOnClickListener(v -> {
@@ -191,9 +196,13 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void requestBatteryOptimizationExemption() {
+    private boolean isBatteryOptimizationExempted() {
         PowerManager pm = getSystemService(PowerManager.class);
-        if (pm != null && pm.isIgnoringBatteryOptimizations(getPackageName())) {
+        return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+    }
+
+    private void requestBatteryOptimizationExemption() {
+        if (isBatteryOptimizationExempted()) {
             Toast.makeText(this, "既に電池最適化から除外されています", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -207,10 +216,14 @@ public class MainActivity extends Activity {
         String state = prefs.isServiceEnabled() ? "● 実行中" : "○ 停止中";
         String extra = statusNote.isEmpty() ? "" : ("\n" + statusNote);
         String bleState = prefs.isBleEnabled() ? "BLE併用: ON" : "BLE併用: OFF";
+        String optState = isBatteryOptimizationExempted()
+                ? "電池最適化: 除外済み（バックグラウンド継続可）"
+                : "電池最適化: 未除外（止まる可能性あり）";
         tvStatus.setText("サービス: " + state + "（" + role + "）"
                 + "\n警告条件: 15%未満で通知、20%以上で再アーム"
                 + "\n送信: 変化時（15秒スロットル）＋60秒ハートビート"
                 + "\n" + bleState + "（近距離のみ、Wi-Fiと並行）"
+                + "\n" + optState
                 + extra);
     }
 

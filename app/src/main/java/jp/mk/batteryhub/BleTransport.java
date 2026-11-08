@@ -8,6 +8,7 @@ import android.bluetooth.le.AdvertiseSettings;
 import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanRecord;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
@@ -18,6 +19,8 @@ import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * BLEによる残量レポートの送受信（v1.3〜）。Wi-Fi/UDPと並行して使う近距離フォールバック。
@@ -255,8 +258,24 @@ public class BleTransport {
         ScanSettings settings = new ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
                 .build();
+        // v1.4: フィルタ付きスキャンにする。フィルタなしスキャンは画面OFF時に
+        // Android側で配信が止まるため、バックグラウンド受信にはフィルタが必須。
+        // 先頭2バイト（マジック 'B','H'）だけをマスクで照合する。
+        List<ScanFilter> filters = Collections.singletonList(
+                new ScanFilter.Builder()
+                        .setManufacturerData(COMPANY_ID,
+                                new byte[]{'B', 'H'},
+                                new byte[]{(byte) 0xFF, (byte) 0xFF})
+                        .build());
         try {
-            // フィルタは使わない（Manufacturer Dataのマスク指定が端末依存で不安定なため全件受けて解釈する）
+            scanner.startScan(filters, settings, scanCallback);
+            scanning = true;
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "filtered startScan exception, fallback to unfiltered: " + e.getMessage());
+        }
+        try {
+            // オフロードフィルタ非対応端末向けのフォールバック（画面OFF時は止まり得る）
             scanner.startScan(null, settings, scanCallback);
             scanning = true;
             return true;

@@ -116,6 +116,40 @@ public class BatteryService extends Service {
         super.onDestroy();
     }
 
+    /**
+     * v1.4: 最近使ったアプリからスワイプで消された場合の保険。
+     * 有効設定のままなら AlarmManager 経由でサービスの再起動を試みる
+     * （OSのバックグラウンド起動制限で弾かれる場合もある。その場合は START_STICKY と
+     * 再起動時の自動開始が最終手段になる）。
+     */
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        if (prefs != null && prefs.isServiceEnabled()) {
+            try {
+                Intent restart = new Intent(this, BatteryService.class);
+                android.app.PendingIntent pi;
+                if (Build.VERSION.SDK_INT >= 26) {
+                    pi = android.app.PendingIntent.getForegroundService(this, 9001, restart,
+                            android.app.PendingIntent.FLAG_ONE_SHOT
+                                    | android.app.PendingIntent.FLAG_IMMUTABLE);
+                } else {
+                    pi = android.app.PendingIntent.getService(this, 9001, restart,
+                            android.app.PendingIntent.FLAG_ONE_SHOT
+                                    | android.app.PendingIntent.FLAG_IMMUTABLE);
+                }
+                android.app.AlarmManager am =
+                        (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
+                if (am != null) {
+                    am.set(android.app.AlarmManager.ELAPSED_REALTIME,
+                            android.os.SystemClock.elapsedRealtime() + 1000, pi);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "onTaskRemoved restart scheduling failed: " + e.getMessage());
+            }
+        }
+        super.onTaskRemoved(rootIntent);
+    }
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;

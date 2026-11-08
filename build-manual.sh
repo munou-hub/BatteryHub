@@ -20,7 +20,7 @@ mkdir -p build-manual/gen build-manual/classes build-manual/dex
     --manifest app/src/main/AndroidManifest.xml \
     --java build-manual/gen \
     --min-sdk-version 26 --target-sdk-version 34 \
-    --version-code 4 --version-name 1.3 \
+    --version-code 5 --version-name 1.4 \
     build-manual/res.zip
 
 find app/src/main/java build-manual/gen -name "*.java" > build-manual/sources.txt

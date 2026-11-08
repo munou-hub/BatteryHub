@@ -4,7 +4,7 @@
 ホスト／クライアントは**同一アプリ**で、設定画面から役割を切り替えます。
 
 - パッケージ名: `jp.mk.batteryhub`
-- バージョン: 1.3（versionCode 4）
+- バージョン: 1.4（versionCode 5）
 - minSdk 26（Android 8.0）／ targetSdk 34（Android 14）
 - 外部ライブラリ依存なし（Android フレームワークのみ、Java 実装）
 
@@ -20,6 +20,17 @@
   - クライアントが `{"type":"discover"}` をブロードキャスト（255.255.255.255 とサブネットブロードキャストの両方）
   - ホストが `{"type":"host","name":"..."}` を返信し、クライアントは送信元 IP をホスト IP として採用
   - 自動発見が使えない環境では、設定画面でホスト IP を手入力できます（ホスト側の画面に自端末の IP が表示されます）
+
+### バックグラウンド継続（v1.4〜）
+
+常駐アプリなので、止められないための仕組みを明示的に入れています。
+
+- 本体はフォアグラウンドサービス（常駐通知あり）＋ `START_STICKY` で動作します
+- **電池最適化の除外を、サービス開始時に自動で要求**します（v1.3 まではボタンから手動で開く必要がありました）。除外しないと Doze に入ったときにサービスごと止められたり、ネットワークアクセスを制限されたりします。状態カードに「電池最適化: 除外済み／未除外」を常時表示します
+- BLE スキャンは**フィルタ付き**（Manufacturer Data の先頭マジック照合）です。フィルタなしスキャンは画面 OFF 時に Android 側で配信が止まるため、バックグラウンド受信にはフィルタが必須です。オフロードフィルタ非対応端末では無フィルタにフォールバックします（その場合は画面 OFF で止まり得ます）
+- 最近使ったアプリからスワイプで消された場合は、`onTaskRemoved` から AlarmManager 経由で再起動を試みます（OS の制限で弾かれる場合もあります）
+- 端末再起動後は `BOOT_COMPLETED` で自動再開します（サービスが有効だった場合のみ）
+- それでもメーカー独自の省電力機能（Xperia の STAMINA モード等）で強制停止された場合は、アプリ側からは復旧できません。長時間使う端末ではメーカー側設定でも除外してください
 
 ### BLE併用（v1.3〜）
 
@@ -167,14 +178,20 @@ gradle assembleDebug
 - Android SDK（platforms;android-34 / build-tools;34.0.0 / platform-tools）: `~/tools/android-sdk`
 - Gradle 8.7: `~/tools/gradle-8.7`
 
-## 検証済み事項（v1.3）
+## 検証済み事項（v1.4）
 
 - Java ソースのコンパイル成功（警告は `Discovery.java` の非推奨 API 使用のみ）
 - APK の署名検証: `apksigner verify` 成功（APK Signature Scheme v2 / v3、デバッグ証明書、署名者 1）
-- `aapt dump badging` で確認: パッケージ名 `jp.mk.batteryhub`、versionCode 4 / versionName 1.3、**minSdk 26** / targetSdk 34、Bluetooth 系権限 6 件（`BLUETOOTH` / `BLUETOOTH_ADMIN` / `BLUETOOTH_SCAN` / `BLUETOOTH_ADVERTISE` / `BLUETOOTH_CONNECT` / `ACCESS_FINE_LOCATION`）を含む全権限、起動 Activity あり、`bluetooth_le` は必須でない（uses-feature required=false）ことを確認
+- `aapt dump badging` で確認: パッケージ名 `jp.mk.batteryhub`、versionCode 5 / versionName 1.4、**minSdk 26** / targetSdk 34
 - zipalign チェック OK
-- APK サイズ: 42,070 bytes / SHA-256: `3dd638d32c5b8d2810c9976107722814165465a4a79e826e8036f8ab447f0ebf`
-- **BLE の実機動作は未確認**です（ビルド・権限・コードレビューまで）。実機で確認してほしい点: クライアントの常駐通知に「BLE送信中」と出るか／Wi-Fi を切った状態でホストの一覧に BLE 経由で残量が出るか／Android 12+ で権限ダイアログが正しく出るか
+- APK サイズ: 42,070 bytes / SHA-256: `42182ec01d648d9b38a9914a207d6adf17dbc86bad79a62a68c3da32e480c12f`
+- **v1.4 のバックグラウンド継続策の実機動作は未確認**です。確認観点: サービス開始直後に電池最適化除外のダイアログが出るか／除外後に画面 OFF のまま BLE 経由の残量が更新され続けるか／履歴からスワイプで消しても常駐通知が残る（または戻る）か
+
+### v1.3 時点の検証（履歴）
+
+- versionCode 4 / versionName 1.3、APK サイズ: 42,070 bytes / SHA-256: `3dd638d32c5b8d2810c9976107722814165465a4a79e826e8036f8ab447f0ebf`
+- Bluetooth 系権限 6 件を含む全権限、`bluetooth_le` は必須でない（uses-feature required=false）ことを badging で確認
+- **BLE の実機動作は未確認**（ビルド・権限・コードレビューまで）。実機で確認してほしい点: クライアントの常駐通知に「BLE送信中」と出るか／Wi-Fi を切った状態でホストの一覧に BLE 経由で残量が出るか／Android 12+ で権限ダイアログが正しく出るか
 
 ### v1.2 時点の検証（履歴）
 
