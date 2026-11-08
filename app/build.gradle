@@ -1,0 +1,34 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'jp.mk.batteryhub'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'jp.mk.batteryhub'
+        minSdk 26
+        targetSdk 34
+        versionCode 4
+        versionName '1.3'
+    }
+
+    buildTypes {
+        debug {
+            // デバッグ署名でそのまま出力（インストール可能なAPK）
+        }
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// 外部ライブラリ依存なし（Androidフレームワークのみ）
+dependencies {
+}

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v1.2 UIパレット。ダーク基調で固定し、アプリ内は常に同じ見え方にする。
+     無彩色ベース＋アクセント1色（青）に絞り、飾りは最小限。 -->
+<resources>
+    <color name="bg">#0F1113</color>
+    <color name="surface">#1B1E23</color>
+    <color name="surface_variant">#24282E</color>
+    <color name="input_bg">#14161A</color>
+    <color name="outline">#363C44</color>
+    <color name="text_primary">#F2F3F5</color>
+    <color name="text_secondary">#B9BEC6</color>
+    <color name="text_muted">#8A919A</color>
+    <color name="accent">#6CB2F5</color>
+    <color name="accent_text">#0A1522</color>
+</resources>

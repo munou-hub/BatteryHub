@@ -1,0 +1,11 @@
+# ローカル環境固有
+local.properties
+
+# 手動ビルドの中間生成物とAPK（バイナリはリポジトリに含めない）
+build-manual/
+*.apk
+*.apk.idsig
+
+# Gradle
+.gradle/
+build/
