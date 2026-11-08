@@ -16,6 +16,8 @@ public class Prefs {
     private static final String KEY_HOST_IP = "host_ip";
     private static final String KEY_SERVICE_ENABLED = "service_enabled";
     private static final String KEY_BLE_ENABLED = "ble_enabled";
+    private static final String KEY_LAST_UPDATE_CHECK = "last_update_check_ms";
+    private static final String KEY_PENDING_DOWNLOAD = "pending_download_id";
 
     private final SharedPreferences sp;
 
@@ -51,6 +53,22 @@ public class Prefs {
 
     public void setBleEnabled(boolean enabled) {
         sp.edit().putBoolean(KEY_BLE_ENABLED, enabled).apply();
+    }
+
+    public long getLastUpdateCheckMs() {
+        return sp.getLong(KEY_LAST_UPDATE_CHECK, 0);
+    }
+
+    public void setLastUpdateCheckMs(long ms) {
+        sp.edit().putLong(KEY_LAST_UPDATE_CHECK, ms).apply();
+    }
+
+    public long getPendingDownloadId() {
+        return sp.getLong(KEY_PENDING_DOWNLOAD, -1);
+    }
+
+    public void setPendingDownloadId(long id) {
+        sp.edit().putLong(KEY_PENDING_DOWNLOAD, id).apply();
     }
 
     public void save(String role, String deviceName, String hostIp, Boolean serviceEnabled) {

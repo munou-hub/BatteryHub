@@ -38,6 +38,9 @@
         android:name="android.hardware.bluetooth_le"
         android:required="false" />
 
+    <!-- アプリ内アップデート（ダウンロードしたAPKのインストール、v1.6〜） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:name=".BatteryHubApp"
         android:allowBackup="true"
@@ -60,6 +63,13 @@
             android:name=".BatteryService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- 更新APKをインストーラへ渡すためのプロバイダ（自前実装） -->
+        <provider
+            android:name=".UpdateProvider"
+            android:authorities="jp.mk.batteryhub.updateprovider"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <receiver
             android:name=".BootReceiver"

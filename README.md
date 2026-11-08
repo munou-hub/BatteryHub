@@ -4,7 +4,7 @@
 ホスト／クライアントは**同一アプリ**で、設定画面から役割を切り替えます。
 
 - パッケージ名: `jp.mk.batteryhub`
-- バージョン: 1.5（versionCode 6）
+- バージョン: 1.6（versionCode 7）
 - minSdk 26（Android 8.0）／ targetSdk 34（Android 14）
 - 外部ライブラリ依存なし（Android フレームワークのみ、Java 実装）
 
@@ -20,6 +20,16 @@
   - クライアントが `{"type":"discover"}` をブロードキャスト（255.255.255.255 とサブネットブロードキャストの両方）
   - ホストが `{"type":"host","name":"..."}` を返信し、クライアントは送信元 IP をホスト IP として採用
   - 自動発見が使えない環境では、設定画面でホスト IP を手入力できます（ホスト側の画面に自端末の IP が表示されます）
+
+### アプリ内アップデート確認（v1.6〜）
+
+- 起動時に自動確認（6時間に1回まで）＋「アップデートを確認」ボタンで手動確認できます
+- 確認先は2段構えです:
+  1. **GitHub Releases の最新リリース**: タグ名をバージョンとして比較し、APKアセットがあればアプリ内でダウンロード→インストール画面まで進めます
+  2. **リポジトリ直下の `version.json`**（フォールバック）: `versionCode` を比較し、新しければポップアップから GitHub の Releases ページへ誘導します
+- 新しいバージョンがある場合はポップアップで知らせます（「ダウンロードして更新」／「GitHubを開く」／「あとで」）
+- アプリ内ダウンロードには「このアプリからのインストール許可」（提供元不明アプリ）が必要です。未許可の場合はポップアップ操作時に設定画面へ誘導します。ダウンロードした APK は自前の ContentProvider 経由でインストーラへ渡します（androidx 不使用）
+- **運用メモ**: バージョンを上げるたびに `version.json` の `versionCode` / `versionName` / `notes` も一緒に更新して push してください。Releases に APK を添付した場合はそちらが優先されます（`apkUrl` を version.json に書いても同じことが可能です）
 
 ### 同期の堅牢化（v1.5〜）
 
@@ -190,6 +200,14 @@ gradle assembleDebug
 - JDK 17.0.21（Microsoft OpenJDK）: `~/tools/jdk17`
 - Android SDK（platforms;android-34 / build-tools;34.0.0 / platform-tools）: `~/tools/android-sdk`
 - Gradle 8.7: `~/tools/gradle-8.7`
+
+## 検証済み事項（v1.6）
+
+- Java ソースのコンパイル成功
+- APK の署名検証: `apksigner verify` 成功（v2 / v3、デバッグ証明書）
+- `aapt dump badging` で確認: versionCode 7 / versionName 1.6、minSdk 26 / targetSdk 34、新規権限 `REQUEST_INSTALL_PACKAGES`、マニフェストに `UpdateProvider`（authorities `jp.mk.batteryhub.updateprovider`、exported=false、grantUriPermissions=true）が含まれることを確認
+- APK サイズ: 54,358 bytes / SHA-256: `0f20483b4615878b78f5abb212729bfad759348023bbc9a383f97895147ca504`
+- **アップデート確認の実機動作は未確認**です。確認観点: v1.6 入れた状態で「アップデートを確認」を押して「最新版です」と出るか／次版（v1.7）を出したときにポップアップが出るか。なお v1.5 以前には確認機能自体がないため、v1.6 への移行は従来どおり APK の直接インストールが必要です
 
 ## 検証済み事項（v1.5）
 

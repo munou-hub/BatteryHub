@@ -134,7 +134,18 @@ public class MainActivity extends Activity {
 
         btnBatteryOpt.setOnClickListener(v -> requestBatteryOptimizationExemption());
 
+        Button btnUpdateCheck = findViewById(R.id.btnUpdateCheck);
+        btnUpdateCheck.setOnClickListener(v -> checkForUpdate(true));
+
         refreshStatus();
+
+        // 起動時の自動アップデート確認（6時間に1回まで）
+        long lastCheck = prefs.getLastUpdateCheckMs();
+        if (System.currentTimeMillis() - lastCheck > 6 * 60 * 60 * 1000L) {
+            checkForUpdate(false);
+        }
+        // 前回の更新ダウンロードが終わっていたらインストールを促す
+        resumePendingInstall();
     }
 
     @Override
@@ -209,6 +220,169 @@ public class MainActivity extends Activity {
         Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
         i.setData(Uri.parse("package:" + getPackageName()));
         startActivity(i);
+    }
+
+    // ---------- アップデート確認（v1.6〜） ----------
+
+    private void checkForUpdate(boolean manual) {
+        if (manual) {
+            Toast.makeText(this, "アップデートを確認中…", Toast.LENGTH_SHORT).show();
+        }
+        prefs.setLastUpdateCheckMs(System.currentTimeMillis());
+        new Thread(() -> {
+            UpdateChecker.Info info = UpdateChecker.check(this);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (info != null) {
+                    showUpdateDialog(info);
+                } else if (manual) {
+                    String msg = UpdateChecker.lastError.isEmpty()
+                            ? "最新版です（v" + UpdateChecker.installedVersionName(this) + "）"
+                            : "確認できませんでした: " + UpdateChecker.lastError;
+                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+                }
+            });
+        }, "bh-update-check").start();
+    }
+
+    private void showUpdateDialog(UpdateChecker.Info info) {
+        StringBuilder msg = new StringBuilder();
+        msg.append("新しいバージョン v").append(info.versionName).append(" があります\n");
+        msg.append("現在: v").append(UpdateChecker.installedVersionName(this));
+        if (info.notes != null && !info.notes.isEmpty()) {
+            msg.append("\n\n").append(info.notes);
+        }
+        android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this)
+                .setTitle("アップデートがあります")
+                .setMessage(msg.toString())
+                .setNegativeButton("あとで", null);
+        if (info.apkUrl != null) {
+            b.setPositiveButton("ダウンロードして更新", (d, w) -> downloadUpdate(info));
+            b.setNeutralButton("GitHubを開く", (d, w) -> openUrl(info.pageUrl));
+        } else {
+            b.setPositiveButton("GitHubで開く", (d, w) -> openUrl(info.pageUrl));
+        }
+        b.show();
+    }
+
+    private void openUrl(String url) {
+        if (url == null || url.isEmpty()) url = UpdateChecker.RELEASES_PAGE_URL;
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception e) {
+            Toast.makeText(this, "ブラウザを開けませんでした", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void downloadUpdate(UpdateChecker.Info info) {
+        // 提供元不明アプリのインストール許可が無い場合は設定へ誘導する
+        if (Build.VERSION.SDK_INT >= 26
+                && !getPackageManager().canRequestPackageInstalls()) {
+            Toast.makeText(this, "このアプリからのインストールを許可してください",
+                    Toast.LENGTH_LONG).show();
+            Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+            i.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(i);
+            return;
+        }
+        android.app.DownloadManager dm = getSystemService(android.app.DownloadManager.class);
+        if (dm == null) {
+            openUrl(info.pageUrl);
+            return;
+        }
+        // 既存のダウンロード済みファイルは消してから取り直す
+        java.io.File old = UpdateProvider.apkFile(this);
+        if (old.exists()) old.delete();
+        android.app.DownloadManager.Request req =
+                new android.app.DownloadManager.Request(Uri.parse(info.apkUrl));
+        req.setTitle("BatteryHub アップデート");
+        req.setDescription("v" + info.versionName + " をダウンロード中");
+        req.setNotificationVisibility(
+                android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+        req.setDestinationInExternalFilesDir(this,
+                android.os.Environment.DIRECTORY_DOWNLOADS, UpdateProvider.APK_FILENAME);
+        long id = dm.enqueue(req);
+        prefs.setPendingDownloadId(id);
+        Toast.makeText(this, "ダウンロードを開始しました", Toast.LENGTH_SHORT).show();
+        pollDownload(id);
+    }
+
+    /** ダウンロード完了をポーリングし、終わったらインストール画面を出す。 */
+    private void pollDownload(long downloadId) {
+        new Thread(() -> {
+            android.app.DownloadManager dm = getSystemService(android.app.DownloadManager.class);
+            if (dm == null) return;
+            for (int i = 0; i < 200; i++) {
+                int status = queryDownloadStatus(dm, downloadId);
+                if (status == android.app.DownloadManager.STATUS_SUCCESSFUL) {
+                    prefs.setPendingDownloadId(-1);
+                    runOnUiThread(() -> {
+                        if (!isFinishing() && !isDestroyed()) installUpdate();
+                    });
+                    return;
+                }
+                if (status == android.app.DownloadManager.STATUS_FAILED) {
+                    prefs.setPendingDownloadId(-1);
+                    runOnUiThread(() -> Toast.makeText(this,
+                            "ダウンロードに失敗しました", Toast.LENGTH_LONG).show());
+                    return;
+                }
+                try {
+                    Thread.sleep(1500);
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+        }, "bh-update-dl").start();
+    }
+
+    private int queryDownloadStatus(android.app.DownloadManager dm, long id) {
+        android.database.Cursor c = null;
+        try {
+            c = dm.query(new android.app.DownloadManager.Query().setFilterById(id));
+            if (c != null && c.moveToFirst()) {
+                return c.getInt(c.getColumnIndexOrThrow(android.app.DownloadManager.COLUMN_STATUS));
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (c != null) c.close();
+        }
+        return -1;
+    }
+
+    private void resumePendingInstall() {
+        long id = prefs.getPendingDownloadId();
+        if (id < 0) return;
+        android.app.DownloadManager dm = getSystemService(android.app.DownloadManager.class);
+        if (dm == null) return;
+        int status = queryDownloadStatus(dm, id);
+        if (status == android.app.DownloadManager.STATUS_SUCCESSFUL) {
+            prefs.setPendingDownloadId(-1);
+            installUpdate();
+        } else if (status == android.app.DownloadManager.STATUS_RUNNING
+                || status == android.app.DownloadManager.STATUS_PENDING
+                || status == android.app.DownloadManager.STATUS_PAUSED) {
+            pollDownload(id);
+        } else {
+            prefs.setPendingDownloadId(-1);
+        }
+    }
+
+    private void installUpdate() {
+        java.io.File f = UpdateProvider.apkFile(this);
+        if (!f.exists()) {
+            Toast.makeText(this, "更新ファイルが見つかりません", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent i = new Intent(Intent.ACTION_VIEW);
+        i.setDataAndType(UpdateProvider.apkUri(getPackageName()),
+                "application/vnd.android.package-archive");
+        i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(i);
+        } catch (Exception e) {
+            Toast.makeText(this, "インストーラを開けませんでした", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void refreshStatus() {
