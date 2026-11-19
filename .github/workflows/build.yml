@@ -29,11 +29,16 @@ jobs:
           gradle-version: "8.7"
 
       # Android SDK はランナーイメージにプリインストール済み（ANDROID_HOME 設定済み）。
-      # android-actions/setup-android は使わない（2026-11-19 の実行 #1 でこのステップが失敗したため）
-      - name: Install Android platform 34
+      # android-actions/setup-android は使わない（2026-11-19 の実行 #1 でこのステップが失敗したため）。
+      # sdkmanager は PATH に無いことがあるので絶対パスで呼び、失敗してもビルドは続行する
+      # （platform 34 はイメージに含まれているため、通常はこのステップ自体が不要）。
+      - name: Ensure Android platform 34
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+            "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0" || true
+          fi
 
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
