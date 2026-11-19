@@ -28,11 +28,12 @@ jobs:
         with:
           gradle-version: "8.7"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # Android SDK はランナーイメージにプリインストール済み（ANDROID_HOME 設定済み）。
+      # android-actions/setup-android は使わない（2026-11-19 の実行 #1 でこのステップが失敗したため）
       - name: Install Android platform 34
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
