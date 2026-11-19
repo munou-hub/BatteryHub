@@ -253,6 +253,17 @@
             android:textColor="@color/text_primary"
             android:textSize="14sp" />
 
+        <Button
+            android:id="@+id/btnUpdateCheck"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_button_secondary"
+            android:text="アップデートを確認"
+            android:textAllCaps="false"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp" />
+
         <!-- デバイス一覧 -->
         <TextView
             android:layout_width="wrap_content"

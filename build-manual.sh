@@ -45,3 +45,12 @@ fi
 
 echo "Built: $(pwd)/BatteryHub-debug.apk"
 "$BT/apksigner" verify --verbose BatteryHub-debug.apk | head -3
+
+# 受け渡し用にバージョン付きファイル名のコピーも作る。
+# チャットの添付は表示名がそのまま保存名になり、拡張子が落ちると
+# Android側でインストールできなくなるため、必ず .apk で終わる実名で渡すこと。
+VER=$(grep -o "versionName '[0-9.]*'" app/build.gradle | grep -o "[0-9.]*")
+if [ -n "$VER" ]; then
+    cp BatteryHub-debug.apk "BatteryHub-v${VER}.apk"
+    echo "Delivery copy: $(pwd)/BatteryHub-v${VER}.apk"
+fi
